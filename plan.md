@@ -319,6 +319,8 @@ staging-zone/
 
 Date-partitioned paths (not overwritten in place) give a natural version history — useful both for debugging and for the Shariah/regulatory audit trail story.
 
+**Why raw-zone is CSV but staging-zone is Parquet (deliberate, not inconsistent):** `raw-zone` is the audit/source-fidelity layer — CSV mirrors how real source systems would actually hand data off and stays human-inspectable by a non-technical auditor without extra tooling. `staging-zone` is downstream of dbt, already typed and transformed, and exists purely as a pre-load audit artifact — Parquet's type fidelity and columnar efficiency matter there, not in the raw landing zone. Revisited and confirmed in Phase 5 planning; don't convert raw-zone to Parquet without asking.
+
 ---
 
 ## 9. Troubleshooting Workflow — Read-Only Investigate, Fix via Git/CI
