@@ -18,6 +18,7 @@ import sys
 from datetime import timedelta
 
 import pendulum
+from airflow.providers.smtp.notifications.smtp import send_smtp_notification
 from airflow.sdk import dag, task
 
 PROJECT_DIR = "/opt/airflow/project"
@@ -28,11 +29,32 @@ SCRIPTS_DIR = f"{PROJECT_DIR}/scripts"
 # between dbt-core's deps and Airflow's constraints file).
 DBT_BIN = "/home/airflow/dbt_venv/bin/dbt"
 
+# Readable failure email — the plain email_on_failure=True default just dumps
+# the raw TaskInstance object, which isn't understandable. Note: try_number/
+# max_tries must be read off `ti` (bare {{ try_number }} raises UndefinedError
+# in Airflow 3.x's SmtpNotifier context — found this by testing for real).
+FAILURE_EMAIL_SUBJECT = "[Takaful Pipeline] {{ ti.task_id }} failed in {{ dag.dag_id }}"
+FAILURE_EMAIL_BODY = """
+<h3>Task failed: {{ ti.task_id }}</h3>
+<p><b>DAG:</b> {{ dag.dag_id }}</p>
+<p><b>Run ID:</b> {{ run_id }}</p>
+<p><b>Attempt:</b> {{ ti.try_number }} (max {{ ti.max_tries }})</p>
+<p><b>Error:</b></p>
+<pre>{{ exception }}</pre>
+<p><a href="{{ ti.log_url }}">View full logs</a></p>
+"""
+
 default_args = {
     "retries": 2,
     "retry_delay": timedelta(minutes=5),
-    "email_on_failure": True,
-    "email": [os.environ.get("ALERT_EMAIL_TO", "")],
+    "on_failure_callback": [
+        send_smtp_notification(
+            from_email=os.environ.get("SMTP_MAIL_FROM", ""),
+            to=os.environ.get("ALERT_EMAIL_TO", ""),
+            subject=FAILURE_EMAIL_SUBJECT,
+            html_content=FAILURE_EMAIL_BODY,
+        )
+    ],
 }
 
 
@@ -50,7 +72,11 @@ def _run_dbt(subcommand: str) -> None:
     if result.stderr:
         print(result.stderr, file=sys.stderr)
     if result.returncode != 0:
-        raise RuntimeError(f"dbt {subcommand} failed (exit code {result.returncode})")
+        # Tail of dbt's own output, not just the exit code — this ends up in
+        # the failure email via {{ exception }}, so it needs to say *what*
+        # failed (e.g. which test), not just that something did.
+        tail = "\n".join((result.stdout + result.stderr).splitlines()[-25:])
+        raise RuntimeError(f"dbt {subcommand} failed (exit code {result.returncode})\n\n{tail}")
 
 
 @dag(

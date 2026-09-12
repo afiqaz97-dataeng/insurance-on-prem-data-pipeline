@@ -311,9 +311,11 @@ def takaful_batch_pipeline():
 
 ### Step 6 — Alerting — as actually built
 
-- `default_args`: `email_on_failure=True`, `retries=2`, `retry_delay=5min`
-- **Airflow 3.2+ requires an actual `smtp_default` Connection, not just `AIRFLOW__SMTP__*` config** — `email_on_failure` switched to `SmtpNotifier` internally, which looks up a Connection. Found this by hitting `AirflowNotFoundException: The conn_id 'smtp_default' isn't defined` on the first real failure. Fixed in `airflow-init`'s startup script: `airflow connections add smtp_default --conn-type smtp ...` built from `.env`'s `SMTP_*` vars (avoids hand-building a URI with special characters — the same class of bug as gotcha #1).
-- Verified for real, not just "no error in the logs": a throwaway test DAG that fails on purpose, confirmed the alert email actually arrived with full failure context.
+- `default_args`: `retries=2`, `retry_delay=5min`
+- **Airflow 3.2+ requires an actual `smtp_default` Connection, not just `AIRFLOW__SMTP__*` config** — `email_on_failure` switches to `SmtpNotifier` internally, which looks up a Connection. Found this by hitting `AirflowNotFoundException: The conn_id 'smtp_default' isn't defined` on the first real failure. Fixed in `airflow-init`'s startup script: `airflow connections add smtp_default --conn-type smtp ...` built from `.env`'s `SMTP_*` vars (avoids hand-building a URI with special characters — the same class of bug as gotcha #1).
+- **Plain `email_on_failure=True` is not readable** — it emails a raw dump of the `TaskInstance` object. Replaced with `on_failure_callback=[send_smtp_notification(...)]` (`airflow.providers.smtp.notifications.smtp`) using custom Jinja `subject`/`html_content`: task, DAG, run ID, attempt count, the actual error, a log link. `_run_dbt()` also now includes the tail of dbt's own stdout/stderr in the exception it raises — `{{ exception }}` in the email otherwise would have inherited a useless bare `"dbt test failed (exit code 1)"` with no indication of *which* test failed.
+- Gotcha specific to Airflow 3.x's `SmtpNotifier`: `{{ try_number }}`/`{{ max_tries }}` are **not** top-level template variables (raises `UndefinedError`, despite some docs suggesting otherwise) — use `{{ ti.try_number }}`/`{{ ti.max_tries }}` instead.
+- Verified for real, twice, not just "no error in the logs": a throwaway test DAG that fails on purpose, confirmed both the original and the readable-template alert email actually arrived with full failure context.
 
 ---
 
