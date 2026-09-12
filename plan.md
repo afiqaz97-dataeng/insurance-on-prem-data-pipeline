@@ -115,9 +115,10 @@ The mart layer uses a star schema. Since policy status, agent assignment, and pa
 |---|---|---|
 | `dim_policies` | **Type 2** | Status, agent reassignment, contribution amount changes — need full history for audit-correct reporting |
 | `dim_participants` | **Type 2** on `state`; **Type 1** on `full_name`/`ic_number` | State changes are meaningful history; name/IC changes are corrections, not real history |
-| `dim_agents` | **Type 2** | Branch reassignment affects historical commission attribution |
 | `dim_product` | **Type 1** | Product catalog is close to static — simple overwrite |
 | `dim_date` | N/A | Standard static date dimension |
+
+**`dim_agents` — dropped (Phase 4 decision).** There is no raw `agents` table and no agent-level attribute anywhere in the raw data — `agent_id`/`branch` only exist on `policies`, one row per policy. Checked empirically: every agent has policies across ~16 different branches, so `branch` is a per-policy attribute (which branch that policy was sold through), not a stable "agent's home branch" — `distinct agent_id, branch` gives ~16 rows per agent, not one, so it can't be an SCD2 unique key and wouldn't represent a real "agent moved branches" history anyway. No `agents_snapshot`; fact tables (`fct_agency_commissions`) reference `agent_id` directly with no dimension enrichment. Revisit only if a real agent master source becomes available.
 
 ### Implementation — dbt snapshots (native SCD2 support)
 
@@ -132,7 +133,7 @@ The mart layer uses a star schema. Since policy status, agent assignment, and pa
       check_cols=['status', 'agent_id', 'contribution_amount'],
     )
 }}
-select * from {{ source('raw', 'policies') }}
+select * from {{ ref('stg_policies') }}
 {% endsnapshot %}
 ```
 
@@ -147,11 +148,13 @@ select * from {{ source('raw', 'policies') }}
       check_cols=['state'],   -- only track state as history; name/IC stay Type 1
     )
 }}
-select * from {{ source('raw', 'participants') }}
+select * from {{ ref('stg_participants') }}
 {% endsnapshot %}
 ```
 
-Running `dbt snapshot` on each scheduled run adds `dbt_valid_from`, `dbt_valid_to`, `dbt_scd_id` automatically — a new row is only created when a `check_cols` field actually changes.
+Both snapshot from the staging model, not `source('raw', ...)` directly — the raw source deliberately reads across every date partition ever written (audit history, see `models/staging/_sources.yml`), so more than one partition would give a snapshot's `unique_key` duplicate rows and break it outright. Staging already dedupes to the latest partition (see `macros/latest_extract.sql`) and casts types, both of which a snapshot needs.
+
+Running `dbt snapshot` on each scheduled run adds `dbt_valid_from`, `dbt_valid_to`, `dbt_scd_id` automatically — a new row is only created when a `check_cols` field actually changes. Verified in Phase 4 by simulating a status change (`POL0000001`: `Lapsed` → `Active`) via a new raw-zone partition: the snapshot correctly closed the old row (`dbt_valid_to` set) and opened a new current row, while every unrelated policy stayed untouched (5000 → 5001 rows, not a full rebuild).
 
 ### Building the dimension table on top of the snapshot
 

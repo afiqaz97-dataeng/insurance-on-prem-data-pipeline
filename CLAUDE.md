@@ -65,8 +65,9 @@ Full design is in `plan.md` Section 5. Summary:
 |---|---|---|
 | `dim_policies` | Type 2 | `status`, `agent_id`, `contribution_amount` |
 | `dim_participants` | Type 2 on `state` only; Type 1 (overwrite) on name/IC | `state` |
-| `dim_agents` | Type 2 | branch/status fields |
 | `dim_product` | Type 1 | N/A — simple overwrite |
+
+**No `dim_agents`.** Dropped in Phase 4 — there's no raw agents table and no agent-level attribute in the raw data at all (`agent_id`/`branch` only exist per-policy, and every agent spans ~16 different branches, so `branch` isn't a stable agent attribute). Fact tables reference `agent_id` directly with no dimension enrichment. See `plan.md` §5 for the full reasoning; don't reintroduce this without a real agent master source.
 
 **Critical rule:** fact tables must join to SCD2 dimensions on an **effective date range** (`valid_from`/`valid_to`), never on the natural key alone. Joining on natural key alone silently collapses history back to "current state" — this is the most common SCD2 bug and must be caught in review, not just at test time.
 

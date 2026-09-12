@@ -34,19 +34,20 @@ Note: `dbt` console script isn't on PATH by default on this machine (pip install
 - [x] **Fixed a latent bug before it could bite:** `_sources.yml` reads raw-zone across *all* date partitions ever written (for audit history), but the mock CSVs are static — so a second day's `extract.py` run would have silently duplicated every row in staging. Added `macros/latest_extract.sql` (`latest_partition_only()`), used via `QUALIFY` in every staging model to keep only the most recent partition. Verified by manually copying `participants.csv` into a second, earlier-dated partition and confirming `stg_participants` still returned exactly 3000 rows (no dupes) before cleaning the test partition back up.
 - [x] Verified: `dbt run --select staging.*` builds all 5 views; row counts match source CSVs exactly (3000/5000/20000/1200/6000); `pif_amount = 0` where `has_pif = false` holds with 0 violations; column types (DATE, BOOLEAN, DECIMAL(12,2)/(5,2)) cast correctly
 
-## Phase 4 — SCD snapshots ⬜
+## Phase 4 — SCD snapshots ✅
 *plan.md §5*
 
-- [ ] `policies_snapshot` (Type 2 on `status`, `agent_id`, `contribution_amount`)
-- [ ] `participants_snapshot` (Type 2 on `state` only)
-- [ ] `agents_snapshot` (Type 2 on branch/status fields)
+- [x] `policies_snapshot` (Type 2 on `status`, `agent_id`, `contribution_amount`) — sources from `ref('stg_policies')`, not raw, to avoid the multi-partition duplicate-key problem
+- [x] `participants_snapshot` (Type 2 on `state` only) — sources from `ref('stg_participants')`
+- [x] ~~`agents_snapshot`~~ — **dropped.** No raw agents table and no agent-level attribute exists in the raw data; empirically every agent spans ~16 different branches, so `policies.branch` isn't a stable per-agent attribute and can't be a working SCD2 unique key. See plan.md §5 / CLAUDE.md SCD section for full reasoning.
+- [x] Verified real Type-2 behavior end-to-end: simulated a status change (`POL0000001` `Lapsed`→`Active`) via a new raw-zone partition, confirmed the snapshot closed the old row (`dbt_valid_to` set) and opened a new current row (5000→5001 rows, all other policies untouched), then reset local snapshot state back to clean (1 row per key) after the test
 
 ## Phase 5 — Mart models ⬜
 *plan.md §5, §6 Step 2*
 
-- [ ] `dim_policies`, `dim_participants`, `dim_agents` built on snapshots (surrogate keys, `valid_from`/`valid_to`/`is_current`)
+- [ ] `dim_policies`, `dim_participants` built on snapshots (surrogate keys, `valid_from`/`valid_to`/`is_current`)
 - [ ] `dim_product` (Type 1, simple overwrite), `dim_date`
-- [ ] `fct_contributions`, `fct_claims`, `fct_agency_commissions` — **joined to SCD2 dims on effective date range, never natural key alone**
+- [ ] `fct_contributions`, `fct_claims`, `fct_agency_commissions` — **joined to SCD2 dims on effective date range, never natural key alone**; `fct_agency_commissions` references `agent_id` directly (no `dim_agents` — see Phase 4)
 
 ## Phase 6 — dbt tests ⬜
 *plan.md §5 (SCD tests), §6 Step 3*
