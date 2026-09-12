@@ -26,6 +26,9 @@ logs/
 airflow.db
 airflow.cfg
 
+# Jupyter
+.ipynb_checkpoints/
+
 # Editor / OS
 .vscode/
 .DS_Store
