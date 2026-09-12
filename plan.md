@@ -260,40 +260,60 @@ Also add a custom test confirming no gaps or overlaps exist in `valid_from`/`val
 
 Both are one consistent value across every row/table within a single run — verified by querying `SELECT DISTINCT` on each column post-load.
 
-### Step 5 — Orchestration (Airflow)
-```python
-from airflow.decorators import dag, task
+### Step 5 — Orchestration (Airflow) — as actually built (Phase 8)
 
-@dag(schedule="0 2 * * *", catchup=False, tags=["takaful", "batch"])
+Airflow **3.3.1**, LocalExecutor (no Celery/Redis — right-sized for this data volume). Real implementation differs from an early sketch in a few ways, each for a concrete reason hit during verification:
+
+```python
+# dags/takaful_batch_pipeline.py
+from airflow.sdk import dag, task   # airflow.sdk, not airflow.decorators — 3.x import path
+
+DBT_BIN = "/home/airflow/dbt_venv/bin/dbt"  # isolated venv, not Airflow's own env — see below
+
+@dag(
+    schedule="0 2 * * *",
+    catchup=False,
+    max_active_runs=1,  # DuckDB is single-writer (gotcha #6) — hit real lock
+    # contention between an auto-created catchup run and a manual trigger
+    tags=["takaful", "batch"],
+)
 def takaful_batch_pipeline():
 
     @task
     def extract():
-        from scripts.extract import run_extraction
+        from extract import run_extraction   # scripts/ added to sys.path
         run_extraction()
 
     @task
     def transform():
-        import subprocess
-        subprocess.run(["dbt", "run", "--project-dir", "dbt_takaful"], check=True)
+        # cwd=DBT_PROJECT_DIR is required — profiles.yml's relative DuckDB
+        # path resolves against the *process's* cwd, not --project-dir
+        subprocess.run([DBT_BIN, "run", "--project-dir", DBT_PROJECT_DIR,
+                         "--profiles-dir", DBT_PROJECT_DIR], cwd=DBT_PROJECT_DIR, ...)
 
     @task
     def test():
-        import subprocess
-        subprocess.run(["dbt", "test", "--project-dir", "dbt_takaful"], check=True)
+        subprocess.run([DBT_BIN, "test", ...], cwd=DBT_PROJECT_DIR, ...)
 
     @task
     def load():
-        from scripts.load import export_and_load_mssql
-        export_and_load_mssql()
+        from load import main as load_main   # scripts/load.py's real entry point
+        load_main()
 
     extract() >> transform() >> test() >> load()
 ```
 
-### Step 6 — Alerting
-- Airflow's built-in `email_on_failure` in `default_args` — no webhook needed
-- Include the failed task's error/log link in the email body
-- Set sensible `retries`/`retry_delay` to avoid alert fatigue on transient issues
+**Why dbt lives in its own venv, not Airflow's environment:** installing `dbt-core`/`dbt-duckdb` directly into the custom Airflow image (against Airflow's constraints file) fails — dbt's dependency tree (jinja2, protobuf, sqlparse) conflicts with Airflow's own pins. This is a known, common Airflow+dbt integration issue, not something specific to this project. Fix (`docker/airflow.Dockerfile`): `python -m venv /home/airflow/dbt_venv`, install dbt there unconstrained, invoke it by full path from the DAG.
+
+**Network addressing inside the Airflow containers differs from every host script.** `docker-compose.yml`'s Airflow services override `MINIO_ENDPOINT`/`MINIO_ENDPOINT_HOST` to the `minio` Docker service name and `MSSQL_SERVER` to `host.docker.internal` — `.env`'s `localhost` defaults stay correct for manual host-side runs. `env_file: .env` supplies the constants (credentials, db names); explicit `environment:` entries override just the values that differ by context.
+
+**Volume mount:** the whole repo is mounted at `/opt/airflow/project` (not just `dags/`), so Airflow's `dbt run` and host-side manual runs/`debug_queries.ipynb` operate on the exact same `dbt_takaful/` project and `duckdb_data/takaful_transform.duckdb` file — never two divergent copies.
+
+### Step 6 — Alerting — as actually built
+
+- `default_args`: `email_on_failure=True`, `retries=2`, `retry_delay=5min`
+- **Airflow 3.2+ requires an actual `smtp_default` Connection, not just `AIRFLOW__SMTP__*` config** — `email_on_failure` switched to `SmtpNotifier` internally, which looks up a Connection. Found this by hitting `AirflowNotFoundException: The conn_id 'smtp_default' isn't defined` on the first real failure. Fixed in `airflow-init`'s startup script: `airflow connections add smtp_default --conn-type smtp ...` built from `.env`'s `SMTP_*` vars (avoids hand-building a URI with special characters — the same class of bug as gotcha #1).
+- Verified for real, not just "no error in the logs": a throwaway test DAG that fails on purpose, confirmed the alert email actually arrived with full failure context.
 
 ---
 

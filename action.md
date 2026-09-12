@@ -81,12 +81,21 @@ Note: `dbt` console script isn't on PATH by default on this machine (pip install
 - [x] Verified end-to-end: all 7 tables load with row counts matching the local DuckDB marts exactly (5000/3000/7/10227/20000/1200/6000); fund-split invariant re-checked directly in MSSQL (0 violations, not just trusted from dbt); re-ran the whole script a second time to confirm idempotent truncate+reload (identical counts, no duplicates, no errors)
 - [x] **Added audit/lineage columns (raised during Phase 8, worth doing regardless of orchestration):** there was no way to tell when a mart row was produced. `dbt_run_started_at` (every mart model, `macros/audit_columns.sql`) says which transform run produced the row; `etl_loaded_at` (stamped in `load.py` at write time) says when it actually landed in MSSQL — two different timestamps since transform and load are separate steps that can run apart. Verified both are single consistent values per run via `SELECT DISTINCT`, and confirmed `dbt test` (all 50) still passes after the schema change.
 
-## Phase 8 — Airflow ⬜
+## Phase 8 — Airflow ✅
 *plan.md §6 Step 5–6*
 
-- [ ] Airflow added to `docker-compose.yml` (containers reach native MSSQL via `host.docker.internal`)
-- [ ] DAG: `extract >> transform >> test >> load` (dbt test is a hard gate before load)
-- [ ] `email_on_failure`, sensible `retries`/`retry_delay`
+- [x] Airflow 3.3.1 added to `docker-compose.yml` — LocalExecutor (postgres, airflow-init, airflow-scheduler, airflow-dag-processor, airflow-apiserver; no redis/worker/flower, right-sized for this data volume)
+- [x] Custom image (`docker/airflow.Dockerfile`): MS ODBC Driver 17 + our Python stack. dbt-core/dbt-duckdb isolated in their own venv (`/home/airflow/dbt_venv`) — installing them into Airflow's own environment conflicts with Airflow's pinned constraints (a real, hit-in-practice pip resolution failure, not theoretical)
+- [x] Whole repo volume-mounted at `/opt/airflow/project` so Airflow's `dbt run` and host-side manual runs/`debug_queries.ipynb` share the exact same `dbt_takaful/` project and `duckdb_data/` file
+- [x] Network addressing overrides on the Airflow services only (`MINIO_ENDPOINT=http://minio:9000`, `MINIO_ENDPOINT_HOST=minio:9000`, `MSSQL_SERVER=host.docker.internal,1433`) — host `.env` keeps its `localhost` defaults for manual runs, unchanged
+- [x] DAG (`dags/takaful_batch_pipeline.py`): `extract >> transform >> test >> load`, `max_active_runs=1` (added after hitting real lock contention between an auto-created catchup run and a manual trigger — DuckDB is single-writer, CLAUDE.md gotcha #6)
+- [x] `email_on_failure`, `retries=2`, `retry_delay=5min`; `smtp_default` Airflow Connection (Airflow 3.2+ requires an actual Connection, not just `AIRFLOW__SMTP__*` config — found this the hard way, first attempt failed with "conn_id `smtp_default` isn't defined")
+- [x] **Found and fixed 3 real bugs while verifying, not just "it built":**
+  - dbt couldn't find the DuckDB file (`profiles.yml`'s relative path resolves against the process's CWD, not `--project-dir`) — fixed with `cwd=DBT_PROJECT_DIR` on the subprocess call
+  - Two DAG runs racing for the same DuckDB file lock, surfacing as `Permission denied` — root-caused to a stale host-side Jupyter kernel still holding a `read_only` connection open; killed it, and added `max_active_runs=1` so this can't happen from Airflow's own side either
+  - Failure emails silently went to a blank recipient because `airflow-scheduler` was started before `.env` had real `SMTP_*`/`ALERT_EMAIL_TO` values — env vars are baked in at container creation, not live-reloaded; fixed by recreating the containers
+- [x] Verified end-to-end via the real Airflow UI/CLI (not just dbt/scripts in isolation): triggered the DAG, all 4 tasks succeeded in ~47s, `CuratedTakafulPOC.marts` row counts re-confirmed identical to the manual Phase 7 run
+- [x] **Real failure/email test**: throwaway test DAG (`_test_email_alert`, deleted after) that fails on purpose — confirmed the alert email actually arrived in the inbox with full failure context (task_id, dag_id, run_id, traceback context), not just "no error in the logs"
 
 ## Phase 9 — Validation exercise ⬜
 *plan.md §10*
