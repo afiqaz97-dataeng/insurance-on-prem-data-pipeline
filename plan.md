@@ -432,7 +432,7 @@ con.sql("""
 - [ ] Build staging + mart models, write dbt tests (including the fund-segregation invariant and SCD gap/overlap tests)
 - [ ] Write `load.py` — dbt marts → Parquet (MinIO staging-zone) → `CuratedTakafulPOC.marts`
 - [ ] Build the Airflow DAG, test the full extract → transform → test → load sequence
-- [ ] Deliberately break a test (bad `fund_type`) to confirm the pipeline correctly blocks the load
+- [x] Deliberately break a test (bad `fund_type`) to confirm the pipeline correctly blocks the load — done via the real Airflow DAG (Phase 9): `test` failed and blocked `load`, `CuratedTakafulPOC.marts` stayed untouched, failure email fired
 - [ ] Connect Power BI to `CuratedTakafulPOC.marts.*` tables, build a validation dashboard
 - [ ] Set up email alerting on task failure
 

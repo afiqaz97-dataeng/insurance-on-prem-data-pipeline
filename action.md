@@ -99,10 +99,14 @@ Note: `dbt` console script isn't on PATH by default on this machine (pip install
 - [x] Verified end-to-end via the real Airflow UI/CLI (not just dbt/scripts in isolation): triggered the DAG, all 4 tasks succeeded in ~47s, `CuratedTakafulPOC.marts` row counts re-confirmed identical to the manual Phase 7 run
 - [x] **Real failure/email test**: throwaway test DAG (`_test_email_alert`, deleted after) that fails on purpose — confirmed the alert email actually arrived in the inbox with full failure context (task_id, dag_id, run_id, traceback context), not just "no error in the logs"
 
-## Phase 9 — Validation exercise ⬜
+## Phase 9 — Validation exercise ✅
 *plan.md §10*
 
-- [ ] Deliberately break a test (bad `fund_type`) — confirm the DAG blocks the load into MSSQL
+- [x] Deliberately broke a test for real, via the real pipeline DAG (not a script in isolation): injected `fund_type='INVALID_FUND'` into `claims.csv`, uploaded it to a future-dated raw-zone partition (`2026-09-14`) so it survived past the DAG's own `extract` step and stayed "latest"
+- [x] Triggered `takaful_batch_pipeline` — `extract` and `transform` succeeded (the bad row flows through, as it should — that's staging's job, not business-logic filtering), `test` failed on `accepted_values_stg_claims_fund_type__PRF__PIF` exactly as expected, retried twice (5min apart, deterministic failure didn't change), then Airflow marked it `failed` and `load` went `upstream_failed` — **never ran**
+- [x] Confirmed `CuratedTakafulPOC.marts.fct_claims` was untouched: 1200 rows before and after, 0 rows with the bad `fund_type` — the hard gate held
+- [x] Confirmed the failure email fired for this real data-quality failure (no SMTP errors logged, same silent-success signature as the two prior confirmed email deliveries)
+- [x] Cleaned up: removed the injected partition, rebuilt `stg_claims`/`fct_claims`, reconfirmed all 50 dbt tests pass clean. Left the failed DAG run in Airflow's history on purpose — it's real audit evidence this exercise happened, fitting the project's own audit-trail story
 
 ## Phase 10 — CI workflow ⬜
 *CLAUDE.md gotchas #7, #8*
