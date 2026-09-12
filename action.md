@@ -71,13 +71,14 @@ Note: `dbt` console script isn't on PATH by default on this machine (pip install
   - Hand-inserted a manufactured overlapping SCD version into `dim_policies` → `no_scd_overlap` caught it (while `dbt_utils.unique_combination_of_columns` on `policy_id, valid_from` correctly did NOT, since it's checking a different thing — confirms the custom overlap test is doing real, non-redundant work)
   - All test data reverted / tables rebuilt clean afterward
 
-## Phase 7 — load.py ⬜
+## Phase 7 — load.py ✅
 *plan.md §6 Step 4*
 
-- [ ] Export dbt marts → Parquet → MinIO `staging-zone` (audit copy)
-- [ ] `CREATE DATABASE CuratedTakafulPOC` if not exists (same pattern as `Migration_Script/load_raw_to_mssql.py`'s `ensure_database_exists()` for `TakafulPOC`), then create `marts` schema inside it
-- [ ] Bulk-load into `CuratedTakafulPOC.marts` (truncate + reload) — a separate database from `TakafulPOC` (raw landing), not a schema alongside `takaful`
-- [ ] Reuse connection pattern from `Migration_Script/load_raw_to_mssql.py` (URL-encoded creds, `fast_executemany=True`, no `method="multi"`, encryption flags)
+- [x] Export dbt marts → Parquet → MinIO `staging-zone` (audit copy), partitioned by date same as raw-zone
+- [x] `CREATE DATABASE CuratedTakafulPOC` if not exists (same pattern as `Migration_Script/load_raw_to_mssql.py`'s `ensure_database_exists()` for `TakafulPOC`) — confirmed working, database didn't exist before first run
+- [x] `marts` schema + explicit DDL for all 7 tables (drop/recreate each run — truncate + reload)
+- [x] Bulk-load into `CuratedTakafulPOC.marts` — reused connection pattern from `Migration_Script/load_raw_to_mssql.py` (URL-encoded creds — real password contains `@`, confirming the gotcha is real not theoretical — `fast_executemany=True`, no `method="multi"`, encryption flags)
+- [x] Verified end-to-end: all 7 tables load with row counts matching the local DuckDB marts exactly (5000/3000/7/10227/20000/1200/6000); fund-split invariant re-checked directly in MSSQL (0 violations, not just trusted from dbt); re-ran the whole script a second time to confirm idempotent truncate+reload (identical counts, no duplicates, no errors)
 
 ## Phase 8 — Airflow ⬜
 *plan.md §6 Step 5–6*
