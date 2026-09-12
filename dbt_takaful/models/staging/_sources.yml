@@ -4,21 +4,25 @@ sources:
   - name: raw
     description: >
       Raw landing zone in MinIO's raw-zone bucket, written by scripts/extract.py.
-      Each table is partitioned by date (raw-zone/{table}/{yyyy-mm-dd}/{table}.csv);
-      the glob below reads across all partitions written so far.
+      Each table is partitioned by date (raw-zone/{table}/{yyyy-mm-dd}/{table}.csv).
+      The source view below reads across ALL partitions ever written (full raw
+      history, `filename=true` exposes which partition each row came from) —
+      staging models are responsible for filtering down to the latest partition;
+      see macros/latest_extract.sql. Do not treat this source as "current state"
+      directly.
     tables:
       - name: participants
         meta:
-          external_location: "s3://{{ env_var('MINIO_BUCKET_RAW', 'raw-zone') }}/participants/*/participants.csv"
+          external_location: "read_csv_auto('s3://{{ env_var('MINIO_BUCKET_RAW', 'raw-zone') }}/participants/*/participants.csv', filename=true, union_by_name=true)"
       - name: policies
         meta:
-          external_location: "s3://{{ env_var('MINIO_BUCKET_RAW', 'raw-zone') }}/policies/*/policies.csv"
+          external_location: "read_csv_auto('s3://{{ env_var('MINIO_BUCKET_RAW', 'raw-zone') }}/policies/*/policies.csv', filename=true, union_by_name=true)"
       - name: contributions
         meta:
-          external_location: "s3://{{ env_var('MINIO_BUCKET_RAW', 'raw-zone') }}/contributions/*/contributions.csv"
+          external_location: "read_csv_auto('s3://{{ env_var('MINIO_BUCKET_RAW', 'raw-zone') }}/contributions/*/contributions.csv', filename=true, union_by_name=true)"
       - name: claims
         meta:
-          external_location: "s3://{{ env_var('MINIO_BUCKET_RAW', 'raw-zone') }}/claims/*/claims.csv"
+          external_location: "read_csv_auto('s3://{{ env_var('MINIO_BUCKET_RAW', 'raw-zone') }}/claims/*/claims.csv', filename=true, union_by_name=true)"
       - name: agency_transactions
         meta:
-          external_location: "s3://{{ env_var('MINIO_BUCKET_RAW', 'raw-zone') }}/agency_transactions/*/agency_transactions.csv"
+          external_location: "read_csv_auto('s3://{{ env_var('MINIO_BUCKET_RAW', 'raw-zone') }}/agency_transactions/*/agency_transactions.csv', filename=true, union_by_name=true)"

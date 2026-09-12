@@ -26,11 +26,13 @@ Status legend: ✅ done · 🚧 in progress · ⬜ not started
 
 Note: `dbt` console script isn't on PATH by default on this machine (pip installed it to `%APPDATA%\Python\Python313\Scripts`, which isn't on PATH) — add that directory to PATH, or call the full path to `dbt.exe` there, if `dbt` isn't found.
 
-## Phase 3 — Staging models ⬜
+## Phase 3 — Staging models ✅
 *plan.md §6 Step 2, CLAUDE.md coding conventions*
 
-- [ ] `stg_participants`, `stg_policies`, `stg_contributions`, `stg_claims`, `stg_agency_transactions`
-- [ ] 1:1 with raw tables, light cleanup only — no business logic
+- [x] `stg_participants`, `stg_policies`, `stg_contributions`, `stg_claims`, `stg_agency_transactions`
+- [x] 1:1 with raw tables, light cleanup only (explicit type casts to match MSSQL raw DDL precision; no business logic, no joins, fund-segregation columns passed through untouched)
+- [x] **Fixed a latent bug before it could bite:** `_sources.yml` reads raw-zone across *all* date partitions ever written (for audit history), but the mock CSVs are static — so a second day's `extract.py` run would have silently duplicated every row in staging. Added `macros/latest_extract.sql` (`latest_partition_only()`), used via `QUALIFY` in every staging model to keep only the most recent partition. Verified by manually copying `participants.csv` into a second, earlier-dated partition and confirming `stg_participants` still returned exactly 3000 rows (no dupes) before cleaning the test partition back up.
+- [x] Verified: `dbt run --select staging.*` builds all 5 views; row counts match source CSVs exactly (3000/5000/20000/1200/6000); `pif_amount = 0` where `has_pif = false` holds with 0 violations; column types (DATE, BOOLEAN, DECIMAL(12,2)/(5,2)) cast correctly
 
 ## Phase 4 — SCD snapshots ⬜
 *plan.md §5*
