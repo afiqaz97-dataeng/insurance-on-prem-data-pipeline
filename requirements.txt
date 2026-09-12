@@ -1,0 +1,8 @@
+pandas
+sqlalchemy
+pyodbc
+boto3
+python-dotenv
+duckdb
+dbt-core
+dbt-duckdb

@@ -1,0 +1,34 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Env / secrets
+.env
+
+# DuckDB working files
+*.duckdb
+*.duckdb.wal
+duckdb_data/
+
+# dbt
+dbt_takaful/target/
+dbt_takaful/dbt_packages/
+dbt_takaful/logs/
+
+# Docker volumes
+minio_data/
+
+# Airflow
+logs/
+airflow.db
+airflow.cfg
+
+# Editor / OS
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Claude Code local state
+.claude/
