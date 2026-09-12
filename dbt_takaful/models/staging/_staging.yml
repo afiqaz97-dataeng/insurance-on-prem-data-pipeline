@@ -1,0 +1,72 @@
+version: 2
+
+models:
+  - name: stg_participants
+    columns:
+      - name: participant_id
+        tests: [not_null, unique]
+
+  - name: stg_policies
+    columns:
+      - name: policy_id
+        tests: [not_null, unique]
+      - name: participant_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_participants')
+                field: participant_id
+      - name: status
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['Active', 'Lapsed', 'Matured', 'Cancelled']
+
+  - name: stg_contributions
+    columns:
+      - name: contribution_id
+        tests: [not_null, unique]
+      - name: policy_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_policies')
+                field: policy_id
+
+  - name: stg_claims
+    columns:
+      - name: claim_id
+        tests: [not_null, unique]
+      - name: policy_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_policies')
+                field: policy_id
+      - name: fund_type
+        # Almost always PRF in practice (CLAUDE.md) — PIF is a valid domain value,
+        # just not observed in this mock dataset.
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['PRF', 'PIF']
+      - name: status
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['Pending', 'Under Review', 'Approved', 'Rejected']
+
+  - name: stg_agency_transactions
+    columns:
+      - name: transaction_id
+        tests: [not_null, unique]
+      - name: policy_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_policies')
+                field: policy_id

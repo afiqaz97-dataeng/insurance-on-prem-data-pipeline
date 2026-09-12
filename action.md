@@ -55,16 +55,21 @@ Note: `dbt` console script isn't on PATH by default on this machine (pip install
 - [x] Verified real SCD2-correct fact behavior end-to-end (not just build success): simulated `POL0000001` `Lapsed`→`Active`, rebuilt everything, confirmed all 4 of its historical contributions (dated 2022–2026) still joined to the *old* `Lapsed` dimension version and showed `Lapsed`, not `Active`. Reset to clean single-version state after.
 - [x] Row counts verified: dim_policies 5000, dim_participants 3000, dim_product 7, dim_date 10227, fct_contributions 20000, fct_claims 1200, fct_agency_commissions 6000; 0 unmatched `policy_sk` across all 3 fact tables
 
-## Phase 6 — dbt tests ⬜
+## Phase 6 — dbt tests ✅
 *plan.md §5 (SCD tests), §6 Step 3*
 
-- [ ] `not_null` on all primary keys
-- [ ] `accepted_values` on `fund_type`
-- [ ] Custom test: `pif_amount = 0` where `has_pif = false`
-- [ ] Custom test: `gross_amount = prf_amount + pif_amount + wakalah_fee_shareholders_fund` (rounding tolerance)
-- [ ] Relationship tests (`policy_id` in claims/contributions → policies)
-- [ ] SCD2 gap/overlap test on `valid_from`/`valid_to` per natural key
-- [ ] `dbt docs generate`
+- [x] `not_null`/`unique` on all primary keys (staging + marts) — `models/staging/_staging.yml`, `models/marts/_marts.yml`
+- [x] `accepted_values` on `fund_type` (`PRF`, `PIF`), policy `status`, claim `status`
+- [x] Custom test: `pif_amount = 0` where `has_pif = false` — `tests/assert_no_pif_leakage.sql`, tested at the mart layer (fct_contributions + dim_policies), not just staging
+- [x] Custom test: `gross_amount = prf_amount + pif_amount + wakalah_fee_shareholders_fund` (rounding tolerance) — `tests/assert_fund_split_invariant.sql`
+- [x] Relationship tests: `policy_id` in claims/contributions/agency_transactions → policies; `participant_id` in policies → participants
+- [x] SCD2 gap/overlap test — custom generic tests `no_scd_overlap` + `exactly_one_current_version` (`macros/generic_tests.sql`), applied to `dim_policies`/`dim_participants`
+- [x] `dbt docs generate` — clean run, catalog built
+- [x] All 50 tests pass on clean data. **Proved 3 of them actually catch bad data** (not just "ran without error"), same discipline as Phases 3-5:
+  - Corrupted one contribution's fund split via a new raw partition → `assert_fund_split_invariant` caught exactly 1 violation
+  - Injected PIF leakage on a no-PIF policy's contribution → `assert_no_pif_leakage` caught it
+  - Hand-inserted a manufactured overlapping SCD version into `dim_policies` → `no_scd_overlap` caught it (while `dbt_utils.unique_combination_of_columns` on `policy_id, valid_from` correctly did NOT, since it's checking a different thing — confirms the custom overlap test is doing real, non-redundant work)
+  - All test data reverted / tables rebuilt clean afterward
 
 ## Phase 7 — load.py ⬜
 *plan.md §6 Step 4*

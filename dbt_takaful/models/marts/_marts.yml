@@ -1,0 +1,71 @@
+version: 2
+
+models:
+  - name: dim_policies
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [policy_id, valid_from]
+      - no_scd_overlap:
+          arguments:
+            natural_key: policy_id
+      - exactly_one_current_version:
+          arguments:
+            natural_key: policy_id
+    columns:
+      - name: policy_sk
+        tests: [unique, not_null]
+      - name: policy_id
+        tests: [not_null]
+
+  - name: dim_participants
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [participant_id, valid_from]
+      - no_scd_overlap:
+          arguments:
+            natural_key: participant_id
+      - exactly_one_current_version:
+          arguments:
+            natural_key: participant_id
+    columns:
+      - name: participant_sk
+        tests: [unique, not_null]
+      - name: participant_id
+        tests: [not_null]
+
+  - name: dim_product
+    columns:
+      - name: product_sk
+        tests: [unique, not_null]
+      - name: product_name
+        tests: [unique, not_null]
+
+  - name: dim_date
+    columns:
+      - name: date_day
+        tests: [unique, not_null]
+
+  - name: fct_contributions
+    columns:
+      - name: contribution_id
+        tests: [unique, not_null]
+      - name: policy_sk
+        # 0 unmatched confirmed in Phase 5 — a null here means the effective-date
+        # join failed to find a dimension version, which should never happen.
+        tests: [not_null]
+
+  - name: fct_claims
+    columns:
+      - name: claim_id
+        tests: [unique, not_null]
+      - name: policy_sk
+        tests: [not_null]
+
+  - name: fct_agency_commissions
+    columns:
+      - name: transaction_id
+        tests: [unique, not_null]
+      - name: policy_sk
+        tests: [not_null]
