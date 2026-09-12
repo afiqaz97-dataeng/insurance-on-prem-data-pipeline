@@ -61,9 +61,9 @@ Python script (LOAD)
    → bulk-loads into MSSQL
         │
         ▼
-MSSQL — TakafulPOC database
-   Schema: takaful   (raw landing — already populated for initial testing)
-   Schema: marts      (transformed, tested output — analyst/Power BI facing)
+MSSQL — two databases, same server (raw vs. curated split for clean access control)
+   TakafulPOC.takaful         (raw landing — already populated for initial testing)
+   CuratedTakafulPOC.marts    (transformed, tested output — analyst/Power BI facing)
         │
         ▼
 Analysts query via SSMS / Power BI connects natively
@@ -81,10 +81,10 @@ Analysts query via SSMS / Power BI connects natively
 | Extraction | **Python script** (`extract.py`) | Reads source data (mock CSVs for POC), writes partitioned files into MinIO |
 | Transformation engine | **DuckDB** | Fast, single-node, embedded analytical engine; reads directly from MinIO via `httpfs` |
 | Transformation framework | **dbt (dbt-duckdb adapter)** | Version-controlled SQL models, tests, auto-generated lineage documentation |
-| Serving warehouse | **MSSQL** (`TakafulPOC` database) | Analyst/Power BI-facing; hosts both raw (`takaful` schema) and transformed (`marts` schema) data |
-| Load | **Python script** (`load.py`) | Exports dbt mart tables → Parquet (MinIO audit copy) → bulk-load into MSSQL `marts` schema |
+| Serving warehouse | **MSSQL** — two databases on the same server | `TakafulPOC` hosts raw landing (`takaful` schema); `CuratedTakafulPOC` hosts transformed, tested output (`marts` schema) — split deliberately so raw and curated data can have different access controls |
+| Load | **Python script** (`load.py`) | Exports dbt mart tables → Parquet (MinIO audit copy) → bulk-load into `CuratedTakafulPOC.marts` |
 | Orchestration | **Apache Airflow** | Sequences extract → transform → test → load; retries, alerting (email), run history |
-| Reporting | **Power BI** | Connects natively to MSSQL `marts.*` tables |
+| Reporting | **Power BI** | Connects natively to `CuratedTakafulPOC.marts.*` tables |
 
 ---
 
@@ -243,7 +243,7 @@ Also add a custom test confirming no gaps or overlaps exist in `valid_from`/`val
 ### Step 4 — Load (`load.py`)
 - Exports each dbt mart table to Parquet
 - Writes a copy to MinIO `staging-zone` (point-in-time audit artifact)
-- Bulk-loads into MSSQL `marts` schema (truncate + reload for POC scale)
+- Bulk-loads into the `CuratedTakafulPOC` database, `marts` schema (truncate + reload for POC scale) — a separate database from `TakafulPOC` (which holds raw landing only), so raw and curated data can carry different access controls; `load.py` must `CREATE DATABASE CuratedTakafulPOC` if it doesn't exist yet, the same way `Migration_Script/load_raw_to_mssql.py` already does for `TakafulPOC`
 - **Important (lesson learned during setup):** use `fast_executemany=True` on the SQLAlchemy engine and avoid `method="multi"` in `pandas.to_sql()` — SQL Server's ODBC driver caps out around ~2,100 parameters per statement, and `method="multi"` easily exceeds this on wide tables with normal chunk sizes.
 - **Important (lesson learned during setup):** URL-encode username/password with `urllib.parse.quote_plus()` when building the SQLAlchemy connection string — passwords containing `@`, `:`, or `/` will otherwise be misparsed.
 
@@ -393,10 +393,10 @@ con.sql("""
 - [ ] Set up `dbt_takaful` project with `dbt-duckdb` adapter, configure `httpfs` to read from MinIO
 - [ ] Build dbt snapshots for `dim_policies`, `dim_participants`, `dim_agents` (SCD Type 2 — see Section 5)
 - [ ] Build staging + mart models, write dbt tests (including the fund-segregation invariant and SCD gap/overlap tests)
-- [ ] Write `load.py` — dbt marts → Parquet (MinIO staging-zone) → MSSQL `marts` schema
+- [ ] Write `load.py` — dbt marts → Parquet (MinIO staging-zone) → `CuratedTakafulPOC.marts`
 - [ ] Build the Airflow DAG, test the full extract → transform → test → load sequence
 - [ ] Deliberately break a test (bad `fund_type`) to confirm the pipeline correctly blocks the load
-- [ ] Connect Power BI to `marts.*` tables, build a validation dashboard
+- [ ] Connect Power BI to `CuratedTakafulPOC.marts.*` tables, build a validation dashboard
 - [ ] Set up email alerting on task failure
 
 ---

@@ -61,7 +61,8 @@ Note: `dbt` console script isn't on PATH by default on this machine (pip install
 *plan.md §6 Step 4*
 
 - [ ] Export dbt marts → Parquet → MinIO `staging-zone` (audit copy)
-- [ ] Bulk-load into MSSQL `marts` schema (truncate + reload)
+- [ ] `CREATE DATABASE CuratedTakafulPOC` if not exists (same pattern as `Migration_Script/load_raw_to_mssql.py`'s `ensure_database_exists()` for `TakafulPOC`), then create `marts` schema inside it
+- [ ] Bulk-load into `CuratedTakafulPOC.marts` (truncate + reload) — a separate database from `TakafulPOC` (raw landing), not a schema alongside `takaful`
 - [ ] Reuse connection pattern from `Migration_Script/load_raw_to_mssql.py` (URL-encoded creds, `fast_executemany=True`, no `method="multi"`, encryption flags)
 
 ## Phase 8 — Airflow ⬜
@@ -86,7 +87,7 @@ Note: `dbt` console script isn't on PATH by default on this machine (pip install
 ## Phase 11 — Power BI ⬜
 *plan.md §3, §6*
 
-- [ ] Connect Power BI to MSSQL `marts.*` tables
+- [ ] Connect Power BI to `CuratedTakafulPOC.marts.*` tables
 - [ ] Build validation dashboard
 
 ---

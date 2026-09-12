@@ -11,7 +11,7 @@ A batch data pipeline for a **Takaful (Islamic insurance) operator in Malaysia**
 
 **Confirmed architecture:**
 ```
-Mock CSVs → Python (extract.py) → MinIO (raw-zone) → DuckDB + dbt (transform + test) → Python (load.py) → MSSQL (marts schema) → Power BI
+Mock CSVs → Python (extract.py) → MinIO (raw-zone) → DuckDB + dbt (transform + test) → Python (load.py) → MSSQL (CuratedTakafulPOC.marts) → Power BI
 ```
 Orchestrated by **Airflow**. MinIO + Airflow run in **Docker**; **MSSQL runs natively** on Windows (already set up and working — do not containerize it, see "Deployment model" below).
 
@@ -29,14 +29,16 @@ Full detail lives in `plan.md`. Build sequence and checklists live in `action.md
 
 ## Database schema — already built, do not rename
 
-MSSQL database: **`TakafulPOC`**
+Raw and curated data live in **two separate MSSQL databases on the same server** — a deliberate split so raw and curated data can carry different access controls, not an oversight. Do not merge them back into one database without asking.
 
-| Schema | Purpose | Status |
-|---|---|---|
-| `takaful` | Raw landing zone — 5 tables, already loaded from mock CSVs | ✅ Done |
-| `marts` | Transformed, tested output (dbt marts land here) | Not yet built |
+| Database | Schema | Purpose | Status |
+|---|---|---|---|
+| **`TakafulPOC`** | `takaful` | Raw landing zone — 5 tables, already loaded from mock CSVs | ✅ Done |
+| **`CuratedTakafulPOC`** | `marts` | Transformed, tested output (dbt marts land here) | Not yet built |
 
-Raw tables (schema `takaful`): `participants`, `policies`, `contributions`, `claims`, `agency_transactions`. Exact column definitions are in `scripts/load_raw_to_mssql.py` (already written) — treat that file as the source of truth for raw schema, don't redefine it elsewhere.
+Raw tables (`TakafulPOC.takaful`): `participants`, `policies`, `contributions`, `claims`, `agency_transactions`. Exact column definitions are in `Migration_Script/load_raw_to_mssql.py` (already written) — treat that file as the source of truth for raw schema, don't redefine it elsewhere.
+
+`CuratedTakafulPOC` doesn't exist yet — `load.py` (Phase 7) must create it the same way `Migration_Script/load_raw_to_mssql.py` already creates `TakafulPOC` (`CREATE DATABASE` if not exists), then create the `marts` schema inside it.
 
 ---
 
