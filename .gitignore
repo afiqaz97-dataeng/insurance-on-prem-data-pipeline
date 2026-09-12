@@ -16,6 +16,7 @@ duckdb_data/
 dbt_takaful/target/
 dbt_takaful/dbt_packages/
 dbt_takaful/logs/
+dbt_takaful/.user.yml
 
 # Docker volumes
 minio_data/

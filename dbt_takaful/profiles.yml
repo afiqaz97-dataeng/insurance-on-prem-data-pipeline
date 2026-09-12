@@ -1,0 +1,40 @@
+# Project-local profiles.yml (not ~/.dbt/profiles.yml) so the POC is self-contained
+# and doesn't touch a developer's global dbt config.
+#
+# Run dbt from the dbt_takaful/ directory, or point at this file explicitly:
+#   cd dbt_takaful && dbt run
+#   dbt run --project-dir dbt_takaful --profiles-dir dbt_takaful
+#
+# `dev` and `ci` are separate targets per CLAUDE.md gotcha #7 — each gets its own
+# DuckDB file so a GitHub Actions run never touches a developer's local working file.
+# All values default to the local MinIO dev setup (.env.example) so this file is
+# safe to commit; override via real env vars for CI or a different environment.
+
+dbt_takaful:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('DBT_DUCKDB_PATH', '../duckdb_data/takaful_transform.duckdb') }}"
+      threads: 4
+      extensions:
+        - httpfs
+      settings:
+        s3_endpoint: "{{ env_var('MINIO_ENDPOINT_HOST', 'localhost:9000') }}"
+        s3_access_key_id: "{{ env_var('MINIO_ACCESS_KEY', 'minioadmin') }}"
+        s3_secret_access_key: "{{ env_var('MINIO_SECRET_KEY', 'minioadmin') }}"
+        s3_url_style: "path"
+        s3_use_ssl: false
+
+    ci:
+      type: duckdb
+      path: "{{ env_var('DBT_DUCKDB_PATH_CI', '../duckdb_data/ci_takaful_transform.duckdb') }}"
+      threads: 4
+      extensions:
+        - httpfs
+      settings:
+        s3_endpoint: "{{ env_var('MINIO_ENDPOINT_HOST_CI', 'localhost:9000') }}"
+        s3_access_key_id: "{{ env_var('MINIO_ACCESS_KEY_CI', 'minioadmin') }}"
+        s3_secret_access_key: "{{ env_var('MINIO_SECRET_KEY_CI', 'minioadmin') }}"
+        s3_url_style: "path"
+        s3_use_ssl: false

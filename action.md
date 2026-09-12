@@ -15,13 +15,16 @@ Status legend: ✅ done · 🚧 in progress · ⬜ not started
 - [x] `scripts/extract.py` — mock CSVs → MinIO `raw-zone/{table}/{yyyy-mm-dd}/{table}.csv`
 - [x] Verified end-to-end: `docker compose up -d minio` + `python scripts/extract.py` + confirmed 5 partitioned files in MinIO, row counts match source CSVs, re-run is idempotent
 
-## Phase 2 — dbt project scaffolding ⬜
+## Phase 2 — dbt project scaffolding ✅
 *plan.md §2 (transform layer), §6 Step 2*
 
-- [ ] `dbt_takaful/` project, `dbt-duckdb` adapter
-- [ ] `profiles.yml` with separate `dev` and `ci` targets (own DuckDB file paths — see CLAUDE.md gotcha #7)
-- [ ] `httpfs` extension configured to read MinIO raw-zone (`s3_endpoint`, path-style, no SSL for local)
-- [ ] Sources defined against raw-zone CSVs
+- [x] `dbt_takaful/` project, `dbt-duckdb` adapter (dbt-core 1.12.4, dbt-duckdb 1.11.0)
+- [x] `profiles.yml` (project-local, not `~/.dbt/`) with separate `dev` and `ci` targets — own DuckDB file paths per CLAUDE.md gotcha #7, all values via `env_var()` with local-dev defaults so the file is safe to commit
+- [x] `httpfs` extension configured to read MinIO raw-zone (`s3_endpoint`, path-style, no SSL for local)
+- [x] Sources defined (`models/staging/_sources.yml`) against raw-zone CSVs via dbt-duckdb `external_location` + glob over date partitions
+- [x] Verified: `dbt debug` passes (DuckDB + httpfs + MinIO connection OK); `dbt parse` succeeds; direct `read_csv_auto` over each source path returns row counts matching source CSVs (3000/5000/20000/1200/6000)
+
+Note: `dbt` console script isn't on PATH by default on this machine (pip installed it to `%APPDATA%\Python\Python313\Scripts`, which isn't on PATH) — add that directory to PATH, or call the full path to `dbt.exe` there, if `dbt` isn't found.
 
 ## Phase 3 — Staging models ⬜
 *plan.md §6 Step 2, CLAUDE.md coding conventions*

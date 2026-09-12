@@ -74,7 +74,7 @@ Full design is in `plan.md` Section 5. Summary:
 
 These cost real debugging time during setup. Apply the fixes proactively rather than waiting to hit the same errors:
 
-1. **SQLAlchemy connection strings + special characters in passwords** — always URL-encode username/password with `urllib.parse.quote_plus()`. A password containing `@` (e.g., `Suede@3245`) will silently break connection parsing if not encoded.
+1. **SQLAlchemy connection strings + special characters in passwords** — always URL-encode username/password with `urllib.parse.quote_plus()`. A password containing `@` (e.g., `YourStr0ng!Pass@word`) will silently break connection parsing if not encoded.
 2. **`pandas.to_sql()` with `method="multi"` on wide tables** — SQL Server's ODBC driver caps out around ~2,100 parameters per statement. `method="multi"` builds one large multi-row INSERT and will fail with `COUNT field incorrect or syntax error` on anything but narrow tables/small chunksizes. Use `fast_executemany=True` on the engine instead, and do **not** pass `method="multi"`.
 3. **MSSQL connection needs `Encrypt=yes&TrustServerCertificate=yes`** in the connection string if the server enforces mandatory encryption (it does here).
 4. **TCP/IP must be explicitly enabled** on the native SQL Server instance, and the service restarted afterward, or connections fail with `Named Pipes Provider: Could not open a connection` even though the engine is running.
