@@ -24,7 +24,8 @@ select
         else ps.dbt_valid_from
     end                                                as valid_from,
     coalesce(ps.dbt_valid_to, timestamp '9999-12-31') as valid_to,
-    (ps.dbt_valid_to is null)                         as is_current
+    (ps.dbt_valid_to is null)                         as is_current,
+    {{ dbt_run_started_at_col() }}
 from {{ ref('participants_snapshot') }} ps
 left join {{ ref('stg_participants') }} cur
     on ps.participant_id = cur.participant_id

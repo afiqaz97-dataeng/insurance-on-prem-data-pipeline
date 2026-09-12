@@ -10,7 +10,8 @@ select
     c.prf_amount,
     c.pif_amount,
     c.wakalah_fee_shareholders_fund,
-    c.payment_method
+    c.payment_method,
+    {{ dbt_run_started_at_col() }}
 from {{ ref('stg_contributions') }} c
 left join {{ ref('dim_policies') }} dp
     on c.policy_id = dp.policy_id

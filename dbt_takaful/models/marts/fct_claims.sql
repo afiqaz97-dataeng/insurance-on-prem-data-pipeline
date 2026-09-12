@@ -10,7 +10,8 @@ select
     cl.claim_amount,
     cl.fund_type,
     cl.status,
-    cl.approval_date
+    cl.approval_date,
+    {{ dbt_run_started_at_col() }}
 from {{ ref('stg_claims') }} cl
 left join {{ ref('dim_policies') }} dp
     on cl.policy_id = dp.policy_id

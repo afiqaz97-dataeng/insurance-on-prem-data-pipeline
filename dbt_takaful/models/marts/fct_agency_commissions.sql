@@ -10,7 +10,8 @@ select
     t.transaction_type,
     t.transaction_date,
     t.commission_rate,
-    t.commission_amount_shareholders_fund
+    t.commission_amount_shareholders_fund,
+    {{ dbt_run_started_at_col() }}
 from {{ ref('stg_agency_transactions') }} t
 left join {{ ref('dim_policies') }} dp
     on t.policy_id = dp.policy_id

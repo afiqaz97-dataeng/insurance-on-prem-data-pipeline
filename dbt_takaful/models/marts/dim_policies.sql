@@ -27,5 +27,6 @@ select
         else dbt_valid_from
     end                                            as valid_from,
     coalesce(dbt_valid_to, timestamp '9999-12-31') as valid_to,
-    (dbt_valid_to is null)                         as is_current
+    (dbt_valid_to is null)                         as is_current,
+    {{ dbt_run_started_at_col() }}
 from {{ ref('policies_snapshot') }}

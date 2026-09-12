@@ -5,6 +5,7 @@
 select
     {{ dbt_utils.generate_surrogate_key(['product_name']) }} as product_sk,
     product_name,
-    product_category
+    product_category,
+    {{ dbt_run_started_at_col() }}
 from {{ ref('stg_policies') }}
 group by product_name, product_category

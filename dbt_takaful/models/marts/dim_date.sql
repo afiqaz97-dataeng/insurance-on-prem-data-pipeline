@@ -16,5 +16,6 @@ select
     extract(day from date_day)           as day_of_month,
     extract(dow from date_day)           as day_of_week,
     strftime(date_day, '%A')             as day_name,
-    extract(dow from date_day) in (0, 6) as is_weekend
+    extract(dow from date_day) in (0, 6) as is_weekend,
+    {{ dbt_run_started_at_col() }}
 from spine

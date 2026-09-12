@@ -26,7 +26,7 @@ Environment variables expected (set in .env or exported before running):
 import os
 import tempfile
 import time
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import quote_plus
 
@@ -107,7 +107,9 @@ TABLE_DDL = {
             contribution_amount  DECIMAL(12,2),
             valid_from           DATETIME2,
             valid_to             DATETIME2,
-            is_current           BIT
+            is_current           BIT,
+            dbt_run_started_at   DATETIME2,
+            etl_loaded_at        DATETIME2
         )
     """,
     "dim_participants": """
@@ -122,27 +124,33 @@ TABLE_DDL = {
             join_date        DATE,
             valid_from       DATETIME2,
             valid_to         DATETIME2,
-            is_current       BIT
+            is_current       BIT,
+            dbt_run_started_at DATETIME2,
+            etl_loaded_at      DATETIME2
         )
     """,
     "dim_product": """
         CREATE TABLE marts.dim_product (
-            product_sk        VARCHAR(64) PRIMARY KEY,
-            product_name      NVARCHAR(100),
-            product_category  NVARCHAR(20)
+            product_sk         VARCHAR(64) PRIMARY KEY,
+            product_name       NVARCHAR(100),
+            product_category   NVARCHAR(20),
+            dbt_run_started_at DATETIME2,
+            etl_loaded_at      DATETIME2
         )
     """,
     "dim_date": """
         CREATE TABLE marts.dim_date (
-            date_day       DATE PRIMARY KEY,
-            year           INT,
-            quarter        INT,
-            month          INT,
-            month_name     VARCHAR(20),
-            day_of_month   INT,
-            day_of_week    INT,
-            day_name       VARCHAR(20),
-            is_weekend     BIT
+            date_day           DATE PRIMARY KEY,
+            year               INT,
+            quarter            INT,
+            month              INT,
+            month_name         VARCHAR(20),
+            day_of_month       INT,
+            day_of_week        INT,
+            day_name           VARCHAR(20),
+            is_weekend         BIT,
+            dbt_run_started_at DATETIME2,
+            etl_loaded_at      DATETIME2
         )
     """,
     "fct_contributions": """
@@ -155,20 +163,24 @@ TABLE_DDL = {
             prf_amount                      DECIMAL(12,2),
             pif_amount                      DECIMAL(12,2),
             wakalah_fee_shareholders_fund   DECIMAL(12,2),
-            payment_method                  NVARCHAR(30)
+            payment_method                  NVARCHAR(30),
+            dbt_run_started_at              DATETIME2,
+            etl_loaded_at                   DATETIME2
         )
     """,
     "fct_claims": """
         CREATE TABLE marts.fct_claims (
-            claim_id        VARCHAR(20) PRIMARY KEY,
-            policy_id       VARCHAR(20),
-            policy_sk       VARCHAR(64),
-            claim_type      NVARCHAR(50),
-            claim_date      DATE,
-            claim_amount    DECIMAL(12,2),
-            fund_type       VARCHAR(10),
-            status          NVARCHAR(20),
-            approval_date   DATE NULL
+            claim_id            VARCHAR(20) PRIMARY KEY,
+            policy_id           VARCHAR(20),
+            policy_sk           VARCHAR(64),
+            claim_type          NVARCHAR(50),
+            claim_date          DATE,
+            claim_amount        DECIMAL(12,2),
+            fund_type           VARCHAR(10),
+            status              NVARCHAR(20),
+            approval_date       DATE NULL,
+            dbt_run_started_at  DATETIME2,
+            etl_loaded_at       DATETIME2
         )
     """,
     "fct_agency_commissions": """
@@ -180,7 +192,9 @@ TABLE_DDL = {
             transaction_type                        NVARCHAR(20),
             transaction_date                        DATE,
             commission_rate                         DECIMAL(5,2),
-            commission_amount_shareholders_fund     DECIMAL(12,2)
+            commission_amount_shareholders_fund     DECIMAL(12,2),
+            dbt_run_started_at                       DATETIME2,
+            etl_loaded_at                             DATETIME2
         )
     """,
 }
@@ -259,12 +273,19 @@ def export_to_parquet_and_upload(duck_con, minio_client, table_name, run_date):
         print(f"  Exported -> s3://{BUCKET_STAGING}/{key}")
 
 
-def load_table_to_mssql(duck_con, mssql_engine, table_name):
+def load_table_to_mssql(duck_con, mssql_engine, table_name, etl_loaded_at):
     """Reads one mart table from DuckDB and bulk-loads it into MSSQL.
     fast_executemany=True is set on the engine; method='multi' is deliberately
     NOT used (CLAUDE.md gotcha #2 — SQL Server's ODBC driver caps out around
-    ~2,100 parameters per statement)."""
+    ~2,100 parameters per statement).
+
+    Stamps etl_loaded_at (one consistent timestamp for every row across every
+    table in this run) — dbt_run_started_at already exists on the DataFrame
+    from the mart model itself and says when the transform happened; this says
+    when it actually landed in CuratedTakafulPOC.marts, which can be minutes
+    later since transform/test/load are separate steps."""
     df = duck_con.sql(f"select * from {table_name}").df()
+    df["etl_loaded_at"] = etl_loaded_at
     df.to_sql(
         table_name,
         con=mssql_engine,
@@ -302,9 +323,10 @@ def main():
         export_to_parquet_and_upload(duck_con, minio_client, table_name, run_date)
 
     print("\nStep 4: Loading marts into MSSQL...")
+    etl_loaded_at = datetime.now()
     start = time.time()
     for table_name in MART_TABLES:
-        load_table_to_mssql(duck_con, mssql_engine, table_name)
+        load_table_to_mssql(duck_con, mssql_engine, table_name, etl_loaded_at)
     elapsed = time.time() - start
 
     duck_con.close()

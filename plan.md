@@ -254,6 +254,12 @@ Also add a custom test confirming no gaps or overlaps exist in `valid_from`/`val
 - **Important (lesson learned during setup):** use `fast_executemany=True` on the SQLAlchemy engine and avoid `method="multi"` in `pandas.to_sql()` — SQL Server's ODBC driver caps out around ~2,100 parameters per statement, and `method="multi"` easily exceeds this on wide tables with normal chunk sizes.
 - **Important (lesson learned during setup):** URL-encode username/password with `urllib.parse.quote_plus()` when building the SQLAlchemy connection string — passwords containing `@`, `:`, or `/` will otherwise be misparsed.
 
+**Audit/lineage columns (added Phase 8).** Originally there was no way to tell when a mart row was produced. Two separate timestamps, not one, since `dbt run` and `load.py` are separate steps that can run minutes or hours apart:
+- `dbt_run_started_at` — set in every mart model via `{{ dbt_run_started_at_col() }}` (`dbt_takaful/macros/audit_columns.sql`, wraps dbt's built-in `run_started_at`). Answers "which transform run produced this row."
+- `etl_loaded_at` — set in `load.py` right before the MSSQL write (one `datetime.now()` per script run, applied to every table). Answers "when did this row actually land in `CuratedTakafulPOC.marts`."
+
+Both are one consistent value across every row/table within a single run — verified by querying `SELECT DISTINCT` on each column post-load.
+
 ### Step 5 — Orchestration (Airflow)
 ```python
 from airflow.decorators import dag, task

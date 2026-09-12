@@ -79,6 +79,7 @@ Note: `dbt` console script isn't on PATH by default on this machine (pip install
 - [x] `marts` schema + explicit DDL for all 7 tables (drop/recreate each run — truncate + reload)
 - [x] Bulk-load into `CuratedTakafulPOC.marts` — reused connection pattern from `Migration_Script/load_raw_to_mssql.py` (URL-encoded creds — real password contains `@`, confirming the gotcha is real not theoretical — `fast_executemany=True`, no `method="multi"`, encryption flags)
 - [x] Verified end-to-end: all 7 tables load with row counts matching the local DuckDB marts exactly (5000/3000/7/10227/20000/1200/6000); fund-split invariant re-checked directly in MSSQL (0 violations, not just trusted from dbt); re-ran the whole script a second time to confirm idempotent truncate+reload (identical counts, no duplicates, no errors)
+- [x] **Added audit/lineage columns (raised during Phase 8, worth doing regardless of orchestration):** there was no way to tell when a mart row was produced. `dbt_run_started_at` (every mart model, `macros/audit_columns.sql`) says which transform run produced the row; `etl_loaded_at` (stamped in `load.py` at write time) says when it actually landed in MSSQL — two different timestamps since transform and load are separate steps that can run apart. Verified both are single consistent values per run via `SELECT DISTINCT`, and confirmed `dbt test` (all 50) still passes after the schema change.
 
 ## Phase 8 — Airflow ⬜
 *plan.md §6 Step 5–6*
