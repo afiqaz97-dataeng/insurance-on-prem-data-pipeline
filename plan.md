@@ -156,6 +156,8 @@ Both snapshot from the staging model, not `source('raw', ...)` directly — the 
 
 Running `dbt snapshot` on each scheduled run adds `dbt_valid_from`, `dbt_valid_to`, `dbt_scd_id` automatically — a new row is only created when a `check_cols` field actually changes. Verified in Phase 4 by simulating a status change (`POL0000001`: `Lapsed` → `Active`) via a new raw-zone partition: the snapshot correctly closed the old row (`dbt_valid_to` set) and opened a new current row, while every unrelated policy stayed untouched (5000 → 5001 rows, not a full rebuild).
 
+**`check` strategy does not update non-tracked columns (Phase 5 finding).** `participants_snapshot` only tracks `state` — but the `check` strategy never updates `full_name`/`ic_number` on an existing row when they're not in `check_cols`, even if the source value changes. Pulling them straight from the snapshot would silently freeze them at whatever value existed when that row's `state` last changed — the opposite of the "Type 1, always current" behavior this design calls for. Fix: `dim_participants` joins back to `stg_participants` (always current) for `full_name`/`ic_number`, and takes `state`/history only from the snapshot. See `models/marts/dim_participants.sql`.
+
 ### Building the dimension table on top of the snapshot
 
 ```sql
@@ -178,6 +180,8 @@ from {{ ref('policies_snapshot') }}
 ### Critical: fact tables must join on the effective dimension version, not the current one
 
 The most common SCD2 mistake is building history correctly in the dimension, then joining facts to it on the natural key alone — which silently collapses everything back to "current state." Facts must join on an effective date range instead:
+
+**Sentinel start date on the earliest version (Phase 5 finding).** A dimension's first-ever snapshotted row gets `valid_from` set to the moment the pipeline first ran — but real transaction history (contributions, claims) predates that. Without a fix, every fact dated before the pipeline's first snapshot run would fail to join to any dimension version at all. Fix: the earliest version per natural key gets `valid_from` pushed back to a beginning-of-time sentinel (`1900-01-01`) instead of its literal snapshot timestamp — see `dim_policies.sql`/`dim_participants.sql`. Verified end-to-end: simulated a policy status change, confirmed historical contributions (dated years before the change) still joined to the *old* dimension version and showed the old status, not the current one.
 
 ```sql
 -- models/marts/fct_contributions.sql

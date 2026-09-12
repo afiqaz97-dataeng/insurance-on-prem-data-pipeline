@@ -42,12 +42,18 @@ Note: `dbt` console script isn't on PATH by default on this machine (pip install
 - [x] ~~`agents_snapshot`~~ — **dropped.** No raw agents table and no agent-level attribute exists in the raw data; empirically every agent spans ~16 different branches, so `policies.branch` isn't a stable per-agent attribute and can't be a working SCD2 unique key. See plan.md §5 / CLAUDE.md SCD section for full reasoning.
 - [x] Verified real Type-2 behavior end-to-end: simulated a status change (`POL0000001` `Lapsed`→`Active`) via a new raw-zone partition, confirmed the snapshot closed the old row (`dbt_valid_to` set) and opened a new current row (5000→5001 rows, all other policies untouched), then reset local snapshot state back to clean (1 row per key) after the test
 
-## Phase 5 — Mart models ⬜
+## Phase 5 — Mart models ✅
 *plan.md §5, §6 Step 2*
 
-- [ ] `dim_policies`, `dim_participants` built on snapshots (surrogate keys, `valid_from`/`valid_to`/`is_current`)
-- [ ] `dim_product` (Type 1, simple overwrite), `dim_date`
-- [ ] `fct_contributions`, `fct_claims`, `fct_agency_commissions` — **joined to SCD2 dims on effective date range, never natural key alone**; `fct_agency_commissions` references `agent_id` directly (no `dim_agents` — see Phase 4)
+- [x] `dim_policies`, `dim_participants` built on snapshots (surrogate keys via `dbt_utils.generate_surrogate_key`, `valid_from`/`valid_to`/`is_current`)
+- [x] `dim_product` (Type 1, derived from `stg_policies` — verified `product_name`→`product_category` is a stable 1:1 mapping, 7 products, no raw catalog table exists), `dim_date` (via `dbt_utils.date_spine`, 2020-01-01 to 2048-01-01)
+- [x] `fct_contributions`, `fct_claims`, `fct_agency_commissions` — joined to `dim_policies` on effective date range, never natural key alone; `fct_agency_commissions` references `agent_id` directly (no `dim_agents` — see Phase 4)
+- [x] Added `dbt_utils` package (`packages.yml` + `dbt deps`)
+- [x] **Fixed two real correctness bugs found while verifying, not just "it ran":**
+  - Sentinel start date (`1900-01-01`) on each key's earliest snapshot version — without it, every fact dated before the pipeline's first snapshot run (i.e. basically everything, on a fresh POC) would fail to join to any dimension version at all (0 rows matched initially, traced to `valid_from` = snapshot capture time, not real history start).
+  - `dim_participants` joins back to `stg_participants` for `full_name`/`ic_number` instead of reading them off the snapshot — the `check` strategy freezes non-tracked columns on unchanged rows, so reading them straight from the snapshot would silently break the "Type 1, always current" requirement.
+- [x] Verified real SCD2-correct fact behavior end-to-end (not just build success): simulated `POL0000001` `Lapsed`→`Active`, rebuilt everything, confirmed all 4 of its historical contributions (dated 2022–2026) still joined to the *old* `Lapsed` dimension version and showed `Lapsed`, not `Active`. Reset to clean single-version state after.
+- [x] Row counts verified: dim_policies 5000, dim_participants 3000, dim_product 7, dim_date 10227, fct_contributions 20000, fct_claims 1200, fct_agency_commissions 6000; 0 unmatched `policy_sk` across all 3 fact tables
 
 ## Phase 6 — dbt tests ⬜
 *plan.md §5 (SCD tests), §6 Step 3*
