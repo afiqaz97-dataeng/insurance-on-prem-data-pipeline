@@ -13,6 +13,16 @@ Mock CSVs → Python (extract.py) → MinIO (raw-zone) → DuckDB + dbt (transfo
 
 Orchestrated end-to-end by **Apache Airflow**, with `dbt test` acting as a hard gate — a failed test blocks the load into the serving warehouse.
 
+```mermaid
+flowchart LR
+    A["extract<br/>CSVs → MinIO raw-zone"] --> B["transform<br/>dbt run (staging) → dbt snapshot → dbt run (full)"]
+    B --> C{"test<br/>50 dbt tests"}
+    C -->|pass| D["load<br/>marts → Parquet (audit copy) → MSSQL"]
+    C -->|fail| E["blocked<br/>MSSQL untouched, failure email sent"]
+```
+
+This is the actual Airflow DAG (`dags/takaful_batch_pipeline.py`), `extract >> transform >> test >> load` — `transform` is three dbt commands, not one: `dbt run` never builds SCD2 snapshots, and the marts `ref()` them, so staging must exist before the snapshot runs and before the full run resolves the marts (see `action.md` Phase 10). Verified for real, not just simulated: a validation exercise deliberately broke a test through this exact DAG and confirmed the `fail` branch — `load` never ran, `CuratedTakafulPOC.marts` stayed untouched.
+
 **Deployment model:** MSSQL runs **natively** on Windows (not containerized — a deliberate on-prem design choice); MinIO and Airflow run in **Docker**, reaching native MSSQL via `host.docker.internal`. This is a data lake feeding a serving warehouse, not a lakehouse — no Iceberg/Delta/Hudi table format is in scope.
 
 ## Why this design
@@ -22,6 +32,35 @@ Orchestrated end-to-end by **Apache Airflow**, with `dbt test` acting as a hard 
 - **Raw and curated data live in separate MSSQL databases** (`TakafulPOC` for raw landing, `CuratedTakafulPOC` for tested output) so they can carry different access controls.
 - **Audit trail, not just a pipeline.** MinIO's date-partitioned raw files, dbt's lineage docs, and `dbt_run_started_at`/`etl_loaded_at` timestamps on every mart row together answer "what did we receive, what did we do to it, and when" — the actual audit story a Shariah committee or regulator would ask for.
 - **The pipeline proves it blocks bad data, on demand.** A validation exercise deliberately breaks a dbt test through the real Airflow DAG and confirms `load` never runs and the serving warehouse stays untouched.
+
+## dbt tests (50 total)
+
+| Category | Count | Notes |
+|---|---:|---|
+| `not_null` / `unique` on primary & surrogate keys | 35 | every table, staging + marts |
+| `relationships` (referential integrity) | 4 | `policy_id`/`participant_id` foreign keys |
+| `accepted_values` (domain constraints) | 3 | policy `status`, claim `status`, claim `fund_type` |
+| `dbt_utils.unique_combination_of_columns` | 2 | `(natural_key, valid_from)` — no duplicate SCD2 versions |
+| `no_scd_overlap` (custom generic) | 2 | no two versions of the same key have overlapping `[valid_from, valid_to)` ranges |
+| `exactly_one_current_version` (custom generic) | 2 | exactly one `is_current` row per natural key |
+| Fund-segregation invariants (custom singular) | 2 | `assert_fund_split_invariant`, `assert_no_pif_leakage` — see below |
+
+The two singular tests are the actual audit-trail claim, made executable:
+
+```sql
+-- assert_fund_split_invariant.sql
+select contribution_id, gross_amount, prf_amount, pif_amount, wakalah_fee_shareholders_fund
+from {{ ref('stg_contributions') }}
+where abs(gross_amount - (prf_amount + pif_amount + wakalah_fee_shareholders_fund)) > 0.01
+
+-- assert_no_pif_leakage.sql
+select f.contribution_id, f.policy_id, f.pif_amount, dp.has_pif
+from {{ ref('fct_contributions') }} f
+join {{ ref('dim_policies') }} dp on f.policy_sk = dp.policy_sk
+where dp.has_pif = false and f.pif_amount != 0
+```
+
+Every custom test here — these two plus `no_scd_overlap`/`exactly_one_current_version` — was verified to actually catch bad data, not just pass on clean data: each was deliberately triggered once with manufactured bad rows before being trusted (`action.md` Phase 6).
 
 ## Stack
 
