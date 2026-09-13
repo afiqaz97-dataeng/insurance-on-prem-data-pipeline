@@ -119,11 +119,13 @@ Note: `dbt` console script isn't on PATH by default on this machine (pip install
 - [x] **That same bug existed in the real Airflow DAG** (`transform` task only ever called `dbt run`) — it "worked" through all of Phase 8/9 only because snapshots already existed on the shared dev DuckDB file from earlier manual phases; SCD2 history was never actually being captured by the orchestrated pipeline. Fixed `dags/takaful_batch_pipeline.py`'s `transform` task to the same bootstrap order, and verified for real: triggered the DAG twice (an auto-scheduled run + a manual run queued behind it by `max_active_runs=1`), both completed all 4 tasks successfully, `dim_policies.dbt_run_started_at` confirmed the snapshot+rebuild genuinely re-ran, `CuratedTakafulPOC.marts` row counts still correct afterward
 - [x] Repo connected to GitHub (`origin` = `afiqaz97-dataeng/insurance-on-prem-data-pipeline`) and pushed by the user — **CI ran for real on GitHub Actions and passed**, confirming the local simulation matched actual runner behavior
 
-## Phase 11 — Power BI ⬜
-*plan.md §3, §6*
+## Phase 11 — Power BI ⬜ (guide delivered — connecting/building is a user action in Power BI Desktop)
+*plan.md §12*
 
-- [ ] Connect Power BI to `CuratedTakafulPOC.marts.*` tables
-- [ ] Build validation dashboard
+- [x] Connection guide written (server, database, auth, Import mode, encryption gotcha) — plan.md §12
+- [x] Relationship model documented, including why `dim_participants` is deliberately NOT related to the facts (natural-key SCD2 fan-out risk — `dim_policies` only carries `participant_id`, not a surrogate `participant_sk`) and why facts join dims on `policy_sk` rather than `policy_id` (the SCD2 effective-date resolution already happened upstream in dbt; Power BI can't express a date-range join itself)
+- [x] Validation dashboard content specified: fund-split + PIF-leakage checks as native SQL (no DAX — both verified for real against `CuratedTakafulPOC`, 0 violations), row counts vs. source, `dbt_run_started_at`/`etl_loaded_at` freshness cards, policy status breakdown, fund segregation by product category, claims overview
+- [ ] **User action:** connect Power BI Desktop, build the report following the guide
 
 ---
 

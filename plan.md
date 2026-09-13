@@ -440,16 +440,16 @@ con.sql("""
 
 ## 10. Open Items / Next Steps
 
-- [ ] Stand up MinIO locally (Docker container or native binary) — buckets: `raw-zone`, `staging-zone`
-- [ ] Write `extract.py` — mock CSVs → MinIO raw-zone
-- [ ] Set up `dbt_takaful` project with `dbt-duckdb` adapter, configure `httpfs` to read from MinIO
-- [ ] Build dbt snapshots for `dim_policies`, `dim_participants`, `dim_agents` (SCD Type 2 — see Section 5)
-- [ ] Build staging + mart models, write dbt tests (including the fund-segregation invariant and SCD gap/overlap tests)
-- [ ] Write `load.py` — dbt marts → Parquet (MinIO staging-zone) → `CuratedTakafulPOC.marts`
-- [ ] Build the Airflow DAG, test the full extract → transform → test → load sequence
+- [x] Stand up MinIO locally (Docker) — buckets: `raw-zone`, `staging-zone` (Phase 1)
+- [x] Write `extract.py` — mock CSVs → MinIO raw-zone (Phase 1)
+- [x] Set up `dbt_takaful` project with `dbt-duckdb` adapter, configure `httpfs` to read from MinIO (Phase 2)
+- [x] Build dbt snapshots for `dim_policies`, `dim_participants` (SCD Type 2 — see Section 5). `dim_agents` dropped — no raw agents source exists (Phase 4)
+- [x] Build staging + mart models, write dbt tests (including the fund-segregation invariant and SCD gap/overlap tests) (Phases 3, 5, 6)
+- [x] Write `load.py` — dbt marts → Parquet (MinIO staging-zone) → `CuratedTakafulPOC.marts` (Phase 7)
+- [x] Build the Airflow DAG, test the full extract → transform → test → load sequence (Phase 8)
 - [x] Deliberately break a test (bad `fund_type`) to confirm the pipeline correctly blocks the load — done via the real Airflow DAG (Phase 9): `test` failed and blocked `load`, `CuratedTakafulPOC.marts` stayed untouched, failure email fired
-- [ ] Connect Power BI to `CuratedTakafulPOC.marts.*` tables, build a validation dashboard
-- [ ] Set up email alerting on task failure
+- [x] Power BI connection guide, relationship model, and validation dashboard content documented (Phase 11 — Section 12); actually connecting/building the report is a user action in Power BI Desktop, not something a coding agent can do
+- [x] Set up email alerting on task failure (Phase 8)
 
 ---
 
@@ -459,3 +459,70 @@ con.sql("""
 - **Cost-efficient:** MinIO, DuckDB, dbt-core, and Airflow are all open source; only MSSQL/Power BI carry licensing cost
 - **No distributed compute needed:** DuckDB handles this data volume comfortably on a single node — no Spark, no HDFS
 - **Reproducible:** raw data preserved in MinIO independent of the transformation logic, so any mart can be rebuilt from scratch if dbt models change
+
+---
+
+## 12. Power BI / Reporting Layer (Phase 11)
+
+Power BI Desktop is a GUI application — the actual connecting and dashboard-building is a user action, not something a coding agent can drive. This section is the prep work: connection details, the relationship model, and validation content, verified against the real `CuratedTakafulPOC.marts` schema.
+
+### Connecting
+
+**Get Data → SQL Server database**
+- **Server:** `localhost,1433` (Power BI Desktop and native MSSQL are on the same machine — same value used everywhere else in this project, e.g. `.env`'s `MSSQL_SERVER`)
+- **Database:** `CuratedTakafulPOC`
+- **Data Connectivity mode:** **Import** — this dataset is a few tens of thousands of rows; DirectQuery adds complexity (and relationship limitations) for no benefit at this scale. Refresh on a schedule (or manually after each `load.py`/Airflow run) is more than sufficient, and `dbt_run_started_at`/`etl_loaded_at` already give the dashboard a way to show data freshness regardless of mode.
+- **Authentication:** Database (SQL Server auth). **Recommended, not required for the POC:** create a dedicated read-only login scoped to `CuratedTakafulPOC` for Power BI, rather than using `sa` — this is the exact reason `CuratedTakafulPOC` was split from `TakafulPOC` in the first place (CLAUDE.md: "so raw and curated data can carry different access controls"); pointing Power BI at `sa` quietly defeats that.
+- **If you hit a certificate/encryption error:** check "Trust server certificate" in the connection dialog's advanced options — same root cause as CLAUDE.md gotcha #3 (the server enforces mandatory encryption with a self-signed cert).
+- Select all 7 tables under `marts`: `dim_policies`, `dim_participants`, `dim_product`, `dim_date`, `fct_contributions`, `fct_claims`, `fct_agency_commissions`.
+
+### Relationship model (Model view)
+
+| From | To | Cardinality |
+|---|---|---|
+| `fct_contributions.policy_sk` | `dim_policies.policy_sk` | many-to-one |
+| `fct_claims.policy_sk` | `dim_policies.policy_sk` | many-to-one |
+| `fct_agency_commissions.policy_sk` | `dim_policies.policy_sk` | many-to-one |
+| `dim_policies.product_name` | `dim_product.product_name` | many-to-one |
+| `fct_contributions.contribution_date` | `dim_date.date_day` | many-to-one |
+| `fct_claims.claim_date` | `dim_date.date_day` | many-to-one |
+| `fct_agency_commissions.transaction_date` | `dim_date.date_day` | many-to-one |
+
+**Why the join is on `policy_sk`, not `policy_id`:** this is the exact same "Critical rule" from Section 5 — facts must resolve to the dimension version that was in effect at the time, never the natural key alone. Power BI's relationship model has no concept of a date-range join, so it can't express that logic itself. It doesn't need to: `load.py` already loads `fct_*.policy_sk`, which dbt resolved correctly (effective-date join) *before* the data ever reached MSSQL. Power BI just does a plain surrogate-key join and gets the SCD2-correct answer for free.
+
+**`dim_participants` is deliberately NOT related to the fact tables.** `dim_policies` only carries `participant_id` (a natural key, not `participant_sk`), and `dim_participants` is SCD2 (potentially several rows per `participant_id`) — a direct natural-key relationship would either be rejected by Power BI or silently fan out/double-count. None of the validation content below needs participant attributes. If you want participant demographics later, filter `dim_participants` to `is_current = 1` first (e.g. a query filter) and treat it as "current state only" — same caveat as `full_name`/`ic_number` already being Type 1.
+
+### Validation dashboard content
+
+Mirrors the dbt tests (Phase 6) as visual tiles — the same invariants, now visible to a non-technical reviewer, not just enforced at build time.
+
+**1–2. Fund-split reconciliation and PIF-leakage checks** — rather than recreate these in DAX/Power Query, load them as native SQL via **Get Data → SQL Server → Advanced options → SQL statement** (no Power BI formula language needed, and it's the exact same logic already proven in `notebooks/debug_queries.ipynb`):
+
+```sql
+-- Fund-split invariant: should return 0 rows
+SELECT contribution_id, policy_id, gross_amount, prf_amount, pif_amount,
+       wakalah_fee_shareholders_fund,
+       gross_amount - (prf_amount + pif_amount + wakalah_fee_shareholders_fund) AS diff
+FROM marts.fct_contributions
+WHERE ABS(gross_amount - (prf_amount + pif_amount + wakalah_fee_shareholders_fund)) > 0.01;
+```
+
+```sql
+-- PIF leakage: should return 0 rows
+SELECT f.contribution_id, f.policy_id, f.pif_amount, dp.has_pif
+FROM marts.fct_contributions f
+JOIN marts.dim_policies dp ON f.policy_sk = dp.policy_sk
+WHERE dp.has_pif = 0 AND f.pif_amount <> 0;
+```
+
+Put each on its own page as a table visual — an empty table *is* the passing result, same as the dbt test. If either ever shows rows, that's a real incident: follow CLAUDE.md's "investigate read-only, fix via code" workflow, don't patch the dashboard.
+
+**3. Row counts vs. source** — a card visual (built-in Count aggregation, no DAX) per table: `dim_policies` 5000, `dim_participants` 3000, `dim_product` 7, `fct_contributions` 20000, `fct_claims` 1200, `fct_agency_commissions` 6000. Sanity-checkable at a glance against the known source CSV counts.
+
+**4. Data freshness** — two cards using the built-in Max aggregation on `dbt_run_started_at` and `etl_loaded_at` (any mart table): shows when the pipeline last transformed vs. last loaded this data. Real, not decorative — Phase 7 verification found these two can genuinely differ by hours.
+
+**5. Policy status breakdown** — bar or donut chart, `dim_policies.status` (Active/Lapsed/Matured/Cancelled), count of `policy_id`.
+
+**6. Fund segregation by product category** — stacked bar chart, `dim_policies.product_category` on the axis, `SUM(prf_amount)`/`SUM(pif_amount)`/`SUM(wakalah_fee_shareholders_fund)` from `fct_contributions` as the series (join via `policy_sk`). Should visually show `pif_amount` at zero for `General` and non-zero only for `Family` products with `has_pif = true` — the fund-segregation story made visible, not just tested.
+
+**7. Claims overview** — bar chart of `fct_claims` by `status`, and a check that `fund_type` is overwhelmingly `PRF` (matches CLAUDE.md's "claims.fund_type is almost always PRF").
