@@ -1,0 +1,92 @@
+name: CI
+
+# Exercises the real extract -> transform -> test sequence against a live MinIO
+# service container. Does NOT run load.py -- there's no MSSQL available here
+# (deliberately never containerized, see CLAUDE.md "Deployment model"), so the
+# hard gate this CI enforces is: dbt test must pass, same as the Airflow DAG's
+# test >> load gate, just without an MSSQL destination to actually load into.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # bitnami/minio was deleted from Docker Hub (Bitnami's Aug 2025 deprecation
+    # of free images); minio/minio and quay.io/minio/minio both need an explicit
+    # `server /data` command to start, which GH Actions' `services:` block can't
+    # override (CLAUDE.md gotcha #8) -- bitnamilegacy/minio is the frozen backup
+    # repo, still free, and auto-starts with just env vars. Verified locally
+    # before adopting this.
+    services:
+      minio:
+        image: bitnamilegacy/minio:latest
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # --- extract.py (host-context: this job runs directly on the runner,
+      # not inside a container, so MinIO is reachable via localhost) ---
+      MINIO_ENDPOINT: http://localhost:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET_RAW: raw-zone
+      MINIO_BUCKET_STAGING: staging-zone
+      # --- dbt `ci` target (CLAUDE.md gotcha #7 -- separate from local dev,
+      # own DuckDB file, never touches a developer's working file) ---
+      MINIO_ENDPOINT_HOST_CI: localhost:9000
+      MINIO_ACCESS_KEY_CI: minioadmin
+      MINIO_SECRET_KEY_CI: minioadmin
+      DBT_DUCKDB_PATH_CI: ../duckdb_data/ci_takaful_transform.duckdb
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Extract mock CSVs to MinIO raw-zone
+        run: python scripts/extract.py
+
+      - name: dbt deps
+        working-directory: dbt_takaful
+        run: dbt deps --profiles-dir .
+
+      - name: dbt run -- staging only (ci target)
+        # Bootstrap order for a FRESH database (every CI run is fresh, unlike
+        # local dev): snapshots ref() staging models, so staging must exist
+        # before `dbt snapshot` runs. Caught by simulating this workflow
+        # locally before ever pushing.
+        working-directory: dbt_takaful
+        run: mkdir -p ../duckdb_data && dbt run --select staging.* --target ci --profiles-dir .
+
+      - name: dbt snapshot (ci target)
+        # `dbt run` never builds snapshots -- separate resource type, separate
+        # command. dim_policies/dim_participants ref() the snapshot tables, so
+        # this must run before the full `dbt run` below.
+        working-directory: dbt_takaful
+        run: dbt snapshot --target ci --profiles-dir .
+
+      - name: dbt run -- full (ci target)
+        working-directory: dbt_takaful
+        run: dbt run --target ci --profiles-dir .
+
+      - name: dbt test (ci target) -- hard gate
+        working-directory: dbt_takaful
+        run: dbt test --target ci --profiles-dir .

@@ -287,9 +287,16 @@ def takaful_batch_pipeline():
     @task
     def transform():
         # cwd=DBT_PROJECT_DIR is required — profiles.yml's relative DuckDB
-        # path resolves against the *process's* cwd, not --project-dir
-        subprocess.run([DBT_BIN, "run", "--project-dir", DBT_PROJECT_DIR,
-                         "--profiles-dir", DBT_PROJECT_DIR], cwd=DBT_PROJECT_DIR, ...)
+        # path resolves against the *process's* cwd, not --project-dir.
+        # `dbt run` never builds snapshots (separate resource/command), and
+        # dim_policies/dim_participants ref() them, which in turn ref()
+        # staging — this exact order matters on a fresh database (see gotcha
+        # #9). Found via Phase 10's CI simulation that this task had never
+        # called `dbt snapshot` at all; it only "worked" because snapshots
+        # already existed on the shared dev file from earlier manual runs.
+        _run_dbt("run", "--select", "staging.*")
+        _run_dbt("snapshot")
+        _run_dbt("run")
 
     @task
     def test():
@@ -316,6 +323,14 @@ def takaful_batch_pipeline():
 - **Plain `email_on_failure=True` is not readable** — it emails a raw dump of the `TaskInstance` object. Replaced with `on_failure_callback=[send_smtp_notification(...)]` (`airflow.providers.smtp.notifications.smtp`) using custom Jinja `subject`/`html_content`: task, DAG, run ID, attempt count, the actual error, a log link. `_run_dbt()` also now includes the tail of dbt's own stdout/stderr in the exception it raises — `{{ exception }}` in the email otherwise would have inherited a useless bare `"dbt test failed (exit code 1)"` with no indication of *which* test failed.
 - Gotcha specific to Airflow 3.x's `SmtpNotifier`: `{{ try_number }}`/`{{ max_tries }}` are **not** top-level template variables (raises `UndefinedError`, despite some docs suggesting otherwise) — use `{{ ti.try_number }}`/`{{ ti.max_tries }}` instead.
 - Verified for real, twice, not just "no error in the logs": a throwaway test DAG that fails on purpose, confirmed both the original and the readable-template alert email actually arrived with full failure context.
+
+### Step 7 — CI (`.github/workflows/ci.yml`) — Phase 10, as actually built
+
+Extract → `dbt run` (staging) → `dbt snapshot` → `dbt run` (full) → `dbt test`, against a live MinIO service container. No `load` step — there's no MSSQL available in a GitHub Actions runner (never containerized, by design), so the gate CI enforces is `dbt test` passing, same spirit as the DAG's `test >> load` gate just without a destination to load into.
+
+- **`bitnami/minio` is gone too** — deleted from Docker Hub in Bitnami's Aug 2025 free-image deprecation (same wave that also killed `minio/minio` itself in Oct 2025, forcing the earlier switch to `quay.io/minio/minio` for local dev — see Phase 1). `quay.io/minio/minio` doesn't help here either: it has no default command (`CMD ["minio"]`, no `server /data` args), which is exactly what GitHub Actions' `services:` block can't inject (gotcha #8). Fix: `bitnamilegacy/minio` — the frozen backup repo, still free, auto-starts from just `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` env vars. Verified locally (pulled, ran, hit `/minio/health/live`) before adopting it, given two prior wrong assumptions about MinIO image availability this same project.
+- **Bootstrap order matters on a fresh database** (every CI run is fresh, unlike local dev): snapshots `ref()` staging models, and `dbt run` never builds snapshots at all (gotcha #9) — `dbt run --select staging.*` must happen before `dbt snapshot`, which must happen before the full `dbt run` (marts `ref()` the snapshots).
+- **Simulated the whole workflow locally before ever pushing** (no GitHub remote configured yet — the user pushes, this session doesn't): ran an isolated `bitnamilegacy/minio` container and replayed every step by hand. This is how the missing-snapshot bug above was actually found — and it turned out to be a real bug in the Airflow DAG too (see Phase 8 correction), not just a CI-only issue.
 
 ---
 

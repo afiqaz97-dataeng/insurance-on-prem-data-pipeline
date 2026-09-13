@@ -98,6 +98,7 @@ Note: `dbt` console script isn't on PATH by default on this machine (pip install
   - Failure emails silently went to a blank recipient because `airflow-scheduler` was started before `.env` had real `SMTP_*`/`ALERT_EMAIL_TO` values — env vars are baked in at container creation, not live-reloaded; fixed by recreating the containers
 - [x] Verified end-to-end via the real Airflow UI/CLI (not just dbt/scripts in isolation): triggered the DAG, all 4 tasks succeeded in ~47s, `CuratedTakafulPOC.marts` row counts re-confirmed identical to the manual Phase 7 run
 - [x] **Real failure/email test**: throwaway test DAG (`_test_email_alert`, deleted after) that fails on purpose — confirmed the alert email actually arrived in the inbox with full failure context (task_id, dag_id, run_id, traceback context), not just "no error in the logs"
+- [x] **Correction found during Phase 10:** `transform` only ever called `dbt run`, which never builds snapshots — this "worked" through Phases 8-9 only because snapshots already existed on the shared dev file from earlier manual runs; SCD2 history was never actually being captured by the orchestrated pipeline. Fixed to the correct bootstrap order (`dbt run --select staging.*` → `dbt snapshot` → `dbt run`) and reverified live (see Phase 10).
 
 ## Phase 9 — Validation exercise ✅
 *plan.md §10*
@@ -108,12 +109,14 @@ Note: `dbt` console script isn't on PATH by default on this machine (pip install
 - [x] Confirmed the failure email fired for this real data-quality failure (no SMTP errors logged, same silent-success signature as the two prior confirmed email deliveries)
 - [x] Cleaned up: removed the injected partition, rebuilt `stg_claims`/`fct_claims`, reconfirmed all 50 dbt tests pass clean. Left the failed DAG run in Airflow's history on purpose — it's real audit evidence this exercise happened, fitting the project's own audit-trail story
 
-## Phase 10 — CI workflow ⬜
-*CLAUDE.md gotchas #7, #8*
+## Phase 10 — CI workflow ✅
+*CLAUDE.md gotchas #7, #8, #9*
 
-- [ ] `.github/workflows/ci.yml` — extract → transform → `dbt test` against a live MinIO service container
-- [ ] Use `bitnami/minio` (not plain `minio/minio`) for the `services:` block
-- [ ] CI dbt target uses its own DuckDB file + CI MinIO credentials, never touches local dev files
+- [x] `.github/workflows/ci.yml` — extract → `dbt run` (staging) → `dbt snapshot` → `dbt run` (full) → `dbt test`, against a live MinIO service container. No `load` step — no MSSQL available in CI (never containerized, by design)
+- [x] `bitnami/minio` was deleted from Docker Hub (Aug 2025 Bitnami deprecation) — used `bitnamilegacy/minio` instead (frozen backup repo, same auto-start behavior). Verified locally before adopting: pulls fine, starts with just env vars, health endpoint responds
+- [x] CI `ci` dbt target uses its own DuckDB file + CI MinIO credentials (already built in Phase 2), never touches local dev files
+- [x] **Simulated the entire workflow locally before ever pushing** (no GitHub remote configured yet) — ran an isolated `bitnamilegacy/minio` container and replayed every CI step by hand. Found and fixed a real bug this way: `dbt run` alone doesn't build snapshots, so `dim_policies`/`dim_participants` failed outright on a fresh database (`schema "snapshots" does not exist`). Fixed with the correct bootstrap order (staging → snapshot → full run) — see gotcha #9
+- [x] **That same bug existed in the real Airflow DAG** (`transform` task only ever called `dbt run`) — it "worked" through all of Phase 8/9 only because snapshots already existed on the shared dev DuckDB file from earlier manual phases; SCD2 history was never actually being captured by the orchestrated pipeline. Fixed `dags/takaful_batch_pipeline.py`'s `transform` task to the same bootstrap order, and verified for real: triggered the DAG twice (an auto-scheduled run + a manual run queued behind it by `max_active_runs=1`), both completed all 4 tasks successfully, `dim_policies.dbt_run_started_at` confirmed the snapshot+rebuild genuinely re-ran, `CuratedTakafulPOC.marts` row counts still correct afterward
 
 ## Phase 11 — Power BI ⬜
 *plan.md §3, §6*

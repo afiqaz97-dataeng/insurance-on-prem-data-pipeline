@@ -58,12 +58,12 @@ default_args = {
 }
 
 
-def _run_dbt(subcommand: str) -> None:
+def _run_dbt(*args: str) -> None:
     # profiles.yml's `path` (../duckdb_data/...) resolves relative to the
     # process's CWD, not --project-dir — cwd must be dbt_takaful/ or dbt looks
     # for the DuckDB file one level too high (found by running this for real).
     result = subprocess.run(
-        [DBT_BIN, subcommand, "--project-dir", DBT_PROJECT_DIR, "--profiles-dir", DBT_PROJECT_DIR],
+        [DBT_BIN, *args, "--project-dir", DBT_PROJECT_DIR, "--profiles-dir", DBT_PROJECT_DIR],
         cwd=DBT_PROJECT_DIR,
         capture_output=True,
         text=True,
@@ -76,7 +76,7 @@ def _run_dbt(subcommand: str) -> None:
         # the failure email via {{ exception }}, so it needs to say *what*
         # failed (e.g. which test), not just that something did.
         tail = "\n".join((result.stdout + result.stderr).splitlines()[-25:])
-        raise RuntimeError(f"dbt {subcommand} failed (exit code {result.returncode})\n\n{tail}")
+        raise RuntimeError(f"dbt {' '.join(args)} failed (exit code {result.returncode})\n\n{tail}")
 
 
 @dag(
@@ -101,6 +101,16 @@ def takaful_batch_pipeline():
 
     @task
     def transform():
+        # `dbt run` never builds snapshots (separate resource type/command),
+        # and dim_policies/dim_participants ref() the snapshot tables, which
+        # in turn ref() staging — so a fresh database needs this exact order.
+        # Found this by simulating the CI workflow (Phase 10) locally: this
+        # DAG had never actually called `dbt snapshot` at all, so on the
+        # existing dev file it "worked" only because snapshots already
+        # existed from earlier manual phases — SCD2 history was never
+        # actually being captured by the orchestrated pipeline.
+        _run_dbt("run", "--select", "staging.*")
+        _run_dbt("snapshot")
         _run_dbt("run")
 
     @task
